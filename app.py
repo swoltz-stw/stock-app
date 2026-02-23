@@ -322,7 +322,7 @@ def main():
 
                 latest_row = df.iloc[-1]
                 last_date = latest_row.name.date()
-                last_close = latest_row["Close"]
+                last_close = float(latest_row["Close"])
 
                 result_row = {
                     "ticker": ticker,
