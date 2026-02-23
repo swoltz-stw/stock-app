@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score
 
 
 # =========================
-# Data + Feature Functions
+# Data + Feature Functions (NO RSI)
 # =========================
 
 def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
@@ -22,21 +22,7 @@ def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
     return data
 
 
-def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    # Compute Relative Strength Index (RSI) for a price series.
-    delta = series.diff()
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-
-    gain_rol = pd.Series(gain, index=series.index).rolling(window=period).mean()
-    loss_rol = pd.Series(loss, index=series.index).rolling(window=period).mean()
-
-    rs = gain_rol / (loss_rol + 1e-9)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-
-def build_features_v2(data: pd.DataFrame):
+def build_features(data: pd.DataFrame):
     # Build feature set and target for the ML model.
     # Target: 1 if next day's close > today's close, else 0.
     df = data.copy()
@@ -48,11 +34,8 @@ def build_features_v2(data: pd.DataFrame):
 
     # Moving averages
     df["SMA_10"] = df["Close"].rolling(window=10).mean()
-    df["SMA_30"] = df["Close"] .rolling(window=30).mean()
+    df["SMA_30"] = df["Close"].rolling(window=30).mean()
     df["SMA_ratio_10_30"] = df["SMA_10"] / (df["SMA_30"] + 1e-9)
-
-    # RSI
-    df["RSI_14"] = compute_rsi(df["Close"], period=14)
 
     # Rolling volatility
     df["vol_10d"] = df["ret_1d"].rolling(window=10).std()
@@ -66,7 +49,7 @@ def build_features_v2(data: pd.DataFrame):
     feature_cols = [
         "ret_1d", "ret_3d", "ret_5d",
         "SMA_10", "SMA_30", "SMA_ratio_10_30",
-        "RSI_14", "vol_10d"
+        "vol_10d"
     ]
 
     X = df[feature_cols]
@@ -94,8 +77,7 @@ def safe_get(info: dict, key: str, default=None):
 
 
 def score_pe(pe: float) -> float:
-    # Heuristic scoring for P/E: lower is generally better up to a point.
-    # Returns a score between 0 and 100.
+    # Heuristic scoring for P/E.
     if pe is None or pe <= 0:
         return 50.0
     if pe < 10:
@@ -192,9 +174,8 @@ def get_fundamental_scores(ticker: str):
 # =========================
 
 
-def train_model_v2(X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random_state: int = 42):
-    # Train a RandomForest classifier and return model, accuracy, and Brier score.
-    # Uses a time-based split (no shuffling).
+def train_model(X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random_state: int = 42):
+    # Train a RandomForest classifier and return model, accuracy, and Brier-like score.
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, shuffle=False
     )
@@ -218,13 +199,12 @@ def train_model_v2(X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random
     proba_test = model.predict_proba(X_test)[:, 1]
     proba_test_1d = np.ravel(proba_test)
 
-    # Manual Brier score = mean((p - y)^2)
     brier = float(np.mean((proba_test_1d - y_test_1d) ** 2))
 
     return model, acc, brier
 
 
-def predict_next_day_v2(model, X: pd.DataFrame):
+def predict_next_day(model, X: pd.DataFrame):
     # Use a trained model and the latest feature row to predict next day UP/DOWN.
     latest_features = X.iloc[[-1]]
     proba = model.predict_proba(latest_features)[0]
@@ -237,22 +217,13 @@ def predict_next_day_v2(model, X: pd.DataFrame):
 
 
 # =========================
-# Streamlit App (Hybrid)
+# Streamlit App (Hybrid, NO RSI)
 # =========================
 
 
 def main():
-    st.set_page_config(page_title="Hybrid Stock Predictor (V2 ML + Fundamentals)", page_icon="📈")
-    st.title("Hybrid Stock Predictor (ML + Fundamentals)")
-    st.write(
-        "This app uses a hybrid approach: "
-        "a machine-learning model (Random Forest) on recent price action, "
-        "and a simple fundamental factor score (P/E, margins, growth, debt). "
-        "It predicts whether a stock is more likely to go UP or DOWN next trading day, "
-        "and assigns a 1–100 rating plus a confidence percentage."
-    )
-
-    st.info("Phase 1 MVP focuses on the 1-day horizon for a single ticker. Additional horizons and backtests will follow.")
+    st.set_page_config(page_title="Hybrid Stock Predictor (No RSI)", page_icon="📈")
+    st.title("Hybrid Stock Predictor (ML + Fundamentals, No RSI)")
 
     st.sidebar.header("Configuration")
 
@@ -289,7 +260,7 @@ def main():
                     st.error("No data returned. Please check the ticker symbol.")
                     return
 
-                df, X, y, feature_cols = build_features_v2(data)
+                df, X, y, feature_cols = build_features(data)
 
                 if len(df) < 150:
                     st.warning(
@@ -297,9 +268,9 @@ def main():
                         "Predictions and calibration may be less reliable."
                     )
 
-                model, acc, brier = train_model_v2(X, y, test_size=test_size)
+                model, acc, brier = train_model(X, y, test_size=test_size)
 
-                direction_ml, confidence_ml, p_up, p_down = predict_next_day_v2(model, X)
+                direction_ml, confidence_ml, p_up, p_down = predict_next_day(model, X)
 
                 ml_score = p_up * 100.0
 
@@ -311,14 +282,13 @@ def main():
                 direction_final = "UP" if final_score > 50.0 else "DOWN"
 
                 model_margin = abs(p_up - 0.5) * 2.0
-                # Assume typical Brier in [0, 0.25], scale to [0,1]
                 brier_scaled = 1.0 - np.clip(brier / 0.25, 0.0, 1.0)
                 raw_confidence = model_margin * brier_scaled
                 confidence_pct = float(np.clip(raw_confidence * 100.0, 0.0, 100.0))
 
                 latest_row = df.iloc[-1]
                 last_date = latest_row.name.date()
-                last_close = latest_row["Close"]
+                last_close = float(latest_row["Close"])
 
                 result_row = {
                     "ticker": ticker,
@@ -394,11 +364,9 @@ def main():
         st.markdown("---")
         st.subheader("Price History (Close)")
 
-        price_to_show = df[["Close"]].copy()
-        try:
-            price_to_show.index = price_to_show.index.tz_localize(None)
-        except Exception:
-            pass
+        price_to_show = pd.DataFrame({
+            "Close": list(df["Close"].astype(float))
+        })
         st.line_chart(price_to_show)
 
         st.subheader("Recent Features Snapshot (Last 10 Days)")
