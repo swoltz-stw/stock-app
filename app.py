@@ -1,520 +1,440 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import yfinance as yf
-from datetime import datetime, timedelta
+import { useState, useEffect, useRef } from "react";
 
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+const MOCK_DATA = {
+  AAPL: {
+    name: "Apple Inc.",
+    price: 189.45,
+    change: 2.34,
+    changePct: 1.25,
+    open: 187.11,
+    high: 190.22,
+    low: 186.88,
+    volume: "52.3M",
+    mktCap: "2.94T",
+    pe: 29.4,
+    eps: 6.44,
+    week52High: 199.62,
+    week52Low: 143.9,
+    rating: "BUY",
+    ratingScore: 82,
+    history: [143, 152, 158, 162, 155, 170, 175, 168, 180, 178, 185, 189],
+  },
+  TSLA: {
+    name: "Tesla, Inc.",
+    price: 242.8,
+    change: -8.45,
+    changePct: -3.36,
+    open: 251.25,
+    high: 253.1,
+    low: 240.5,
+    volume: "118.7M",
+    mktCap: "771.2B",
+    pe: 62.1,
+    eps: 3.91,
+    week52High: 278.98,
+    week52Low: 138.8,
+    rating: "HOLD",
+    ratingScore: 54,
+    history: [139, 155, 180, 210, 195, 220, 260, 245, 278, 255, 251, 243],
+  },
+  MSFT: {
+    name: "Microsoft Corp.",
+    price: 415.2,
+    change: 5.1,
+    changePct: 1.24,
+    open: 410.1,
+    high: 416.5,
+    low: 409.8,
+    volume: "21.4M",
+    mktCap: "3.08T",
+    pe: 35.6,
+    eps: 11.66,
+    week52High: 430.82,
+    week52Low: 309.45,
+    rating: "BUY",
+    ratingScore: 88,
+    history: [310, 328, 340, 355, 362, 375, 388, 400, 410, 405, 410, 415],
+  },
+  NVDA: {
+    name: "NVIDIA Corp.",
+    price: 875.4,
+    change: 22.3,
+    changePct: 2.62,
+    open: 853.1,
+    high: 881.2,
+    low: 850.0,
+    volume: "44.1M",
+    mktCap: "2.15T",
+    pe: 68.3,
+    eps: 12.81,
+    week52High: 974.0,
+    week52Low: 410.0,
+    rating: "STRONG BUY",
+    ratingScore: 94,
+    history: [410, 480, 520, 600, 680, 750, 820, 790, 860, 840, 853, 875],
+  },
+  AMZN: {
+    name: "Amazon.com Inc.",
+    price: 185.6,
+    change: -1.2,
+    changePct: -0.64,
+    open: 186.8,
+    high: 187.5,
+    low: 184.2,
+    volume: "33.8M",
+    mktCap: "1.93T",
+    pe: 44.8,
+    eps: 4.14,
+    week52High: 201.2,
+    week52Low: 118.35,
+    rating: "BUY",
+    ratingScore: 76,
+    history: [118, 130, 142, 155, 160, 168, 175, 190, 200, 195, 187, 186],
+  },
+};
 
+const MONTHS = ["Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan"];
 
-# =========================
-# Data + Feature Functions (NO RSI, NO MACRO)
-# =========================
+function MiniChart({ history, positive }) {
+  const min = Math.min(...history);
+  const max = Math.max(...history);
+  const range = max - min || 1;
+  const W = 200, H = 60;
+  const pts = history.map((v, i) => {
+    const x = (i / (history.length - 1)) * W;
+    const y = H - ((v - min) / range) * H;
+    return `${x},${y}`;
+  });
+  const color = positive ? "#00e5a0" : "#ff4d6d";
+  const fillPts = `0,${H} ${pts.join(" ")} ${W},${H}`;
 
-def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
-    """Download historical daily OHLC data for a ticker using yfinance.
-    Normalize so we ALWAYS return a DataFrame with a single 'Close' column.
-    """
-    end = datetime.today()
-    start = end - timedelta(days=365 * lookback_years)
-    data = yf.download(ticker, start=start, end=end)
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 60 }}>
+      <defs>
+        <linearGradient id={`grad-${positive}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <polygon points={fillPts} fill={`url(#grad-${positive})`} />
+      <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
-    if data is None or data.empty:
-        return pd.DataFrame()
+function RatingGauge({ score }) {
+  const color = score >= 80 ? "#00e5a0" : score >= 55 ? "#f5c518" : "#ff4d6d";
+  const label = score >= 80 ? (score >= 90 ? "STRONG BUY" : "BUY") : score >= 55 ? "HOLD" : "SELL";
+  const circumference = 2 * Math.PI * 40;
+  const dash = (score / 100) * circumference;
 
-    # If MultiIndex columns (e.g., ('Close','QQQ')), flatten
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(-1)
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      <svg width="100" height="100" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="40" fill="none" stroke="#1e2433" strokeWidth="8" />
+        <circle
+          cx="50" cy="50" r="40" fill="none"
+          stroke={color} strokeWidth="8"
+          strokeDasharray={`${dash} ${circumference}`}
+          strokeLinecap="round"
+          transform="rotate(-90 50 50)"
+          style={{ transition: "stroke-dasharray 1s ease" }}
+        />
+        <text x="50" y="46" textAnchor="middle" fill={color} fontSize="22" fontWeight="700" fontFamily="'DM Mono', monospace">{score}</text>
+        <text x="50" y="62" textAnchor="middle" fill="#8892a4" fontSize="9" fontFamily="'DM Mono', monospace">/ 100</text>
+      </svg>
+      <span style={{ color, fontSize: 12, fontWeight: 700, letterSpacing: 2, fontFamily: "'DM Mono', monospace" }}>{label}</span>
+    </div>
+  );
+}
 
-    # Drop duplicate columns
-    data = data.loc[:, ~data.columns.duplicated()]
+export default function StockEvaluator() {
+  const [query, setQuery] = useState("");
+  const [ticker, setTicker] = useState("AAPL");
+  const [data, setData] = useState(MOCK_DATA["AAPL"]);
+  const [error, setError] = useState("");
+  const [animKey, setAnimKey] = useState(0);
+  const inputRef = useRef();
 
-    # Force to a single Close series
-    if "Close" in data.columns:
-        close = data["Close"]
-    elif "Adj Close" in data.columns:
-        close = data["Adj Close"]
-    else:
-        return pd.DataFrame()
-
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-
-    out = pd.DataFrame({"Close": close})
-    out.dropna(inplace=True)
-    return out
-
-
-def build_features(data: pd.DataFrame):
-    """Build feature set and target for the ML model.
-    Target: 1 if next day's close > today's close, else 0.
-    """
-    df = data.copy()
-
-    if df.empty or "Close" not in df.columns:
-        return pd.DataFrame(), pd.DataFrame(), pd.Series(dtype=int), []
-
-    # Daily returns
-    df["ret_1d"] = df["Close"].pct_change(1)
-    df["ret_3d"] = df["Close"].pct_change(3)
-    df["ret_5d"] = df["Close"].pct_change(5)
-
-    # Moving averages
-    df["SMA_10"] = df["Close"].rolling(window=10).mean()
-    df["SMA_30"] = df["Close"].rolling(window=30).mean()
-    df["SMA_ratio_10_30"] = df["SMA_10"] / (df["SMA_30"] + 1e-9)
-
-    # Rolling volatility
-    df["vol_10d"] = df["ret_1d"].rolling(window=10).std()
-    df["vol_60d"] = df["ret_1d"].rolling(window=60).std()
-
-    # 52-week high drawdown
-    window_52w = 252
-    df["52w_high"] = df["Close"].rolling(window=window_52w).max()
-    df["dd_52w"] = (df["Close"] - df["52w_high"]) / (df["52w_high"] + 1e-9)
-
-    # Target: 1 if next day's close > today's close, else 0
-    df["target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
-
-    # Drop rows with NaNs (from rolling / shift)
-    df.dropna(inplace=True)
-
-    feature_cols = [
-        "ret_1d", "ret_3d", "ret_5d",
-        "SMA_10", "SMA_30", "SMA_ratio_10_30",
-        "vol_10d", "vol_60d", "dd_52w"
-    ]
-
-    X = df[feature_cols]
-    y = df["target"]
-
-    return df, X, y, feature_cols
-
-
-# =========================
-# Fundamental Factor Scoring
-# =========================
-
-def safe_get(info: dict, key: str, default=None):
-    """Safe dictionary access for yfinance .info."""
-    try:
-        value = info.get(key, default)
-        if value is None:
-            return default
-        if isinstance(value, float) and np.isnan(value):
-            return default
-        return value
-    except Exception:
-        return default
-
-
-def score_pe(pe: float) -> float:
-    if pe is None or pe <= 0:
-        return 50.0
-    if pe < 10:
-        return 90.0
-    if pe < 20:
-        return 80.0
-    if pe < 30:
-        return 65.0
-    if pe < 50:
-        return 50.0
-    if pe < 80:
-        return 40.0
-    return 30.0
-
-
-def score_margin(margin: float) -> float:
-    if margin is None:
-        return 50.0
-    margin = max(min(margin, 0.4), -0.4)
-    return (margin + 0.4) / 0.8 * 100.0
-
-
-def score_growth(growth: float) -> float:
-    if growth is None:
-        return 50.0
-    growth = max(min(growth, 0.5), -0.5)
-    return (growth + 0.5) / 1.0 * 100.0
-
-
-def score_debt_to_equity(de: float) -> float:
-    if de is None or de < 0:
-        return 50.0
-    if de < 0.5:
-        return 85.0
-    if de < 1.0:
-        return 75.0
-    if de < 2.0:
-        return 60.0
-    if de < 3.0:
-        return 45.0
-    return 30.0
-
-
-def score_roe(roe: float) -> float:
-    if roe is None:
-        return 50.0
-    roe = max(min(roe, 0.3), -0.1)
-    return (roe + 0.1) / 0.4 * 100.0
-
-
-def score_roa(roa: float) -> float:
-    if roa is None:
-        return 50.0
-    roa = max(min(roa, 0.2), -0.05)
-    return (roa + 0.05) / 0.25 * 100.0
-
-
-def score_dividend_yield(dy: float) -> float:
-    if dy is None or dy < 0:
-        return 50.0
-    if dy < 0.01:
-        return 40.0
-    if dy < 0.05:
-        return 85.0
-    if dy < 0.10:
-        return 60.0
-    return 40.0
-
-
-def score_payout_ratio(pr: float) -> float:
-    if pr is None or pr < 0:
-        return 50.0
-    if pr < 0.2:
-        return 60.0
-    if pr < 0.6:
-        return 85.0
-    if pr < 1.0:
-        return 50.0
-    return 40.0
-
-
-def get_fundamental_factor_scores(ticker: str):
-    try:
-        tk = yf.Ticker(ticker)
-        info = tk.info
-    except Exception:
-        info = {}
-
-    trailing_pe = safe_get(info, "trailingPE")
-    forward_pe = safe_get(info, "forwardPE")
-    profit_margin = safe_get(info, "profitMargins")
-    revenue_growth = safe_get(info, "revenueGrowth")
-    debt_to_equity = safe_get(info, "debtToEquity")
-    roe = safe_get(info, "returnOnEquity")
-    roa = safe_get(info, "returnOnAssets")
-    dividend_yield = safe_get(info, "dividendYield")
-    payout_ratio = safe_get(info, "payoutRatio")
-
-    free_cashflow = safe_get(info, "freeCashflow")
-    total_revenue = safe_get(info, "totalRevenue")
-    if free_cashflow is not None and total_revenue:
-        fcf_margin = free_cashflow / total_revenue
-    else:
-        fcf_margin = None
-
-    factors = {}
-
-    factors["trailingPE"] = {"raw": trailing_pe, "score": score_pe(trailing_pe)}
-    factors["forwardPE"] = {"raw": forward_pe, "score": score_pe(forward_pe)}
-    factors["profitMargins"] = {"raw": profit_margin, "score": score_margin(profit_margin)}
-    factors["revenueGrowth"] = {"raw": revenue_growth, "score": score_growth(revenue_growth)}
-    factors["debtToEquity"] = {"raw": debt_to_equity, "score": score_debt_to_equity(debt_to_equity)}
-    factors["ROE"] = {"raw": roe, "score": score_roe(roe)}
-    factors["ROA"] = {"raw": roa, "score": score_roa(roa)}
-    factors["FCF_margin"] = {"raw": fcf_margin, "score": score_margin(fcf_margin)}
-    factors["dividendYield"] = {"raw": dividend_yield, "score": score_dividend_yield(dividend_yield)}
-    factors["payoutRatio"] = {"raw": payout_ratio, "score": score_payout_ratio(payout_ratio)}
-
-    valid_scores = [d["score"] for d in factors.values() if d["score"] is not None]
-    fundamental_score = float(np.mean(valid_scores)) if valid_scores else 50.0
-
-    return fundamental_score, factors
-
-
-# =========================
-# Technical Factor Scoring
-# =========================
-
-def score_return(r: float) -> float:
-    if r is None or np.isnan(r):
-        return 50.0
-    r = max(min(r, 0.1), -0.1)
-    return (r + 0.1) / 0.2 * 100.0
-
-
-def score_vol(vol: float, low: float = 0.005, high: float = 0.05) -> float:
-    if vol is None or np.isnan(vol):
-        return 50.0
-    vol = max(min(vol, high), low)
-    return (high - vol) / (high - low) * 100.0
-
-
-def score_sma_ratio(ratio: float) -> float:
-    if ratio is None or np.isnan(ratio):
-        return 50.0
-    ratio = max(min(ratio, 1.2), 0.8)
-    return (ratio - 0.8) / 0.4 * 100.0
-
-
-def score_drawdown(dd: float) -> float:
-    if dd is None or np.isnan(dd):
-        return 50.0
-    dd = max(min(dd, 0.0), -0.8)
-    return (abs(dd) / 0.8) * 100.0
-
-
-def get_technical_factor_scores(df: pd.DataFrame):
-    latest = df.iloc[-1]
-
-    factors = {}
-    factors["ret_1d"] = {"raw": latest["ret_1d"], "score": score_return(latest["ret_1d"])}
-    factors["ret_3d"] = {"raw": latest["ret_3d"], "score": score_return(latest["ret_3d"])}
-    factors["ret_5d"] = {"raw": latest["ret_5d"], "score": score_return(latest["ret_5d"])}
-    factors["SMA_10"] = {"raw": latest["SMA_10"], "score": 50.0}
-    factors["SMA_30"] = {"raw": latest["SMA_30"], "score": 50.0}
-    factors["SMA_ratio_10_30"] = {
-        "raw": latest["SMA_ratio_10_30"],
-        "score": score_sma_ratio(latest["SMA_ratio_10_30"]),
+  const handleSearch = (e) => {
+    e.preventDefault();
+    const sym = query.trim().toUpperCase();
+    if (MOCK_DATA[sym]) {
+      setTicker(sym);
+      setData(MOCK_DATA[sym]);
+      setError("");
+      setAnimKey(k => k + 1);
+    } else {
+      setError(`"${sym}" not found. Try: ${Object.keys(MOCK_DATA).join(", ")}`);
     }
-    factors["vol_10d"] = {"raw": latest["vol_10d"], "score": score_vol(latest["vol_10d"])}
-    factors["vol_60d"] = {"raw": latest["vol_60d"], "score": score_vol(latest["vol_60d"])}
-    factors["dd_52w"] = {"raw": latest["dd_52w"], "score": score_drawdown(latest["dd_52w"])}
+    setQuery("");
+  };
 
-    valid_scores = [d["score"] for d in factors.values() if d["score"] is not None]
-    technical_score = float(np.mean(valid_scores)) if valid_scores else 50.0
+  const isPositive = data.change >= 0;
+  const accentColor = isPositive ? "#00e5a0" : "#ff4d6d";
 
-    return technical_score, factors
+  const statRow = (label, value, highlight) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #1e2433" }}>
+      <span style={{ color: "#8892a4", fontSize: 12, fontFamily: "'DM Mono', monospace", letterSpacing: 1 }}>{label}</span>
+      <span style={{ color: highlight ? accentColor : "#e8ecf4", fontSize: 13, fontWeight: 600, fontFamily: "'DM Mono', monospace" }}>{value}</span>
+    </div>
+  );
 
-
-# =========================
-# ML Training (reference)
-# =========================
-
-def train_model(X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random_state: int = 42):
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, shuffle=False
-    )
-
-    model = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=6,
-        min_samples_leaf=5,
-        random_state=random_state,
-        n_jobs=-1
-    )
-
-    model.fit(X_train, y_train)
-
-    y_pred = model.predict(X_test)
-    y_test_1d = np.ravel(y_test)
-    y_pred_1d = np.ravel(y_pred)
-
-    acc = accuracy_score(y_test_1d, y_pred_1d)
-
-    proba_test = model.predict_proba(X_test)[:, 1]
-    proba_test_1d = np.ravel(proba_test)
-
-    brier = float(np.mean((proba_test_1d - y_test_1d) ** 2))
-
-    return model, acc, brier
-
-
-def predict_next_day(model, X: pd.DataFrame):
-    latest_features = X.iloc[[-1]]
-    proba = model.predict_proba(latest_features)[0]
-
-    p_down, p_up = proba[0], proba[1]
-    direction = "UP" if p_up >= p_down else "DOWN"
-    confidence = max(p_up, p_down)
-
-    return direction, confidence, p_up, p_down
-
-
-# =========================
-# Streamlit App
-# =========================
-
-def main():
-    st.set_page_config(page_title="Hybrid Stock Predictor (No RSI)", page_icon="📈")
-    st.title("Hybrid Stock Predictor (ML + Fundamentals)")
-
-    st.sidebar.header("Configuration")
-
-    default_ticker = "SPY"
-    ticker = st.sidebar.text_input("Ticker symbol", value=default_ticker).upper()
-
-    lookback_years = st.sidebar.slider(
-        "Years of history to use (for training)",
-        min_value=1,
-        max_value=10,
-        value=3,
-        step=1,
-        help="Number of past years of daily data to pull for model training."
-    )
-
-    test_size = st.sidebar.slider(
-        "Test size (for backtest split)",
-        min_value=0.1,
-        max_value=0.5,
-        value=0.2,
-        step=0.05,
-        help="Fraction of the most recent data used as a hold-out test set."
-    )
-
-    show_category_summary = st.sidebar.checkbox("Summarize by category", value=True)
-    show_factor_details = st.sidebar.checkbox("Show individual factor scores", value=False)
-
-    if st.sidebar.button("Run Prediction"):
-        if not ticker:
-            st.error("Please enter a ticker symbol.")
-            return
-
-        with st.spinner(f"Fetching data and computing scores for {ticker}..."):
-            try:
-                data = get_price_history(ticker, lookback_years=lookback_years)
-                if data.empty:
-                    st.error("No data returned. Please check the ticker symbol.")
-                    return
-
-                df, X, y, feature_cols = build_features(data)
-
-                if df.empty:
-                    st.error("Not enough usable data after feature engineering.")
-                    return
-
-                if len(df) < 150:
-                    st.warning(
-                        "Not much historical data available after feature engineering. "
-                        "Predictions and calibration may be less reliable."
-                    )
-
-                model, acc, brier = train_model(X, y, test_size=test_size)
-                direction_ml, confidence_ml, p_up, p_down = predict_next_day(model, X)
-
-                technical_score, tech_factors = get_technical_factor_scores(df)
-                fundamental_score, fund_factors = get_fundamental_factor_scores(ticker)
-
-                # 50/50 split Technical / Fundamental (since Macro is removed for stability)
-                final_factor_score = 0.5 * technical_score + 0.5 * fundamental_score
-                final_factor_score = float(np.clip(final_factor_score, 0.0, 100.0))
-
-                direction_final = "UP" if final_factor_score > 50.0 else "DOWN"
-                distance_from_50 = abs(final_factor_score - 50.0) / 50.0
-                confidence_pct = float(np.clip(distance_from_50 * 100.0, 0.0, 100.0))
-
-                latest_row = df.iloc[-1]
-                last_date = latest_row.name.date()
-                last_close = float(latest_row["Close"])
-
-                factor_rows = []
-                for name, d in tech_factors.items():
-                    factor_rows.append({
-                        "factor": name,
-                        "category": "Technical",
-                        "raw_value": d["raw"],
-                        "score_0_100": d["score"],
-                    })
-                for name, d in fund_factors.items():
-                    factor_rows.append({
-                        "factor": name,
-                        "category": "Fundamental",
-                        "raw_value": d["raw"],
-                        "score_0_100": d["score"],
-                    })
-
-                factors_df = pd.DataFrame(factor_rows)
-
-                category_rows = [
-                    {
-                        "category": "Technical",
-                        "score": technical_score,
-                        "weight": 0.5,
-                        "weighted_contribution": 0.5 * technical_score,
-                    },
-                    {
-                        "category": "Fundamental",
-                        "score": fundamental_score,
-                        "weight": 0.5,
-                        "weighted_contribution": 0.5 * fundamental_score,
-                    },
-                ]
-                category_df = pd.DataFrame(category_rows)
-                category_df.loc["Total", "category"] = "Total"
-                category_df.loc["Total", "score"] = None
-                category_df.loc["Total", "weight"] = 1.0
-                category_df.loc["Total", "weighted_contribution"] = (
-                    0.5 * technical_score + 0.5 * fundamental_score
-                )
-
-            except Exception as e:
-                import traceback
-                st.error(f"Something went wrong: {e}")
-                st.code(traceback.format_exc())
-                return
-
-        st.subheader(f"Results for {ticker}")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Last close date", str(last_date))
-            st.metric("Last close price", f"${last_close:,.2f}")
-        with col2:
-            st.metric("Final factor score (1–100)", f"{final_factor_score:.1f}")
-            st.metric("Predicted direction (1-day)", direction_final)
-        with col3:
-            st.metric("Confidence % (factor-based)", f"{confidence_pct:.1f}%")
-            st.metric("ML backtest accuracy", f"{acc:.3f}")
-
-        st.markdown("---")
-        st.subheader("ML Probability (reference)")
-        st.write(f"P(UP) from ML model: `{p_up * 100:.1f}%`")
-        st.write(f"P(DOWN) from ML model: `{p_down * 100:.1f}%`")
-
-        if show_category_summary:
-            st.markdown("### Category scores (Technical / Fundamental)")
-            st.dataframe(category_df)
-
-        if show_factor_details:
-            st.markdown("### Individual factor scores (0–100)")
-            st.dataframe(factors_df)
-
-        st.markdown("---")
-        st.subheader("Price History (Close)")
-        price_to_show = pd.DataFrame({"Close": list(df["Close"].astype(float))})
-        st.line_chart(price_to_show)
-
-        st.subheader("Recent Features Snapshot (Last 10 Days)")
-        st.dataframe(df[feature_cols + ["target"]].tail(10))
-
-        st.markdown("---")
-        st.subheader("Export Prediction Summary")
-        summary_row = {
-            "ticker": ticker,
-            "last_date": last_date,
-            "last_close": last_close,
-            "final_factor_score_1d": final_factor_score,
-            "direction_1d": direction_final,
-            "confidence_pct_factor": confidence_pct,
-            "technical_score": technical_score,
-            "fundamental_score": fundamental_score,
-            "ml_p_up_1d": p_up,
-            "ml_p_down_1d": p_down,
-            "ml_backtest_accuracy": acc,
-            "ml_brier_score": brier,
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@700;800&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #080d17; }
+        .evaluator-root {
+          min-height: 100vh;
+          background: #080d17;
+          background-image: radial-gradient(ellipse at 20% 0%, rgba(0,229,160,0.06) 0%, transparent 60%),
+                            radial-gradient(ellipse at 80% 100%, rgba(99,102,241,0.06) 0%, transparent 60%);
+          font-family: 'DM Mono', monospace;
+          padding: 32px 24px;
+          color: #e8ecf4;
         }
-        summary_df = pd.DataFrame([summary_row])
-        csv_bytes = summary_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download 1-day factor prediction as CSV",
-            data=csv_bytes,
-            file_name=f"{ticker}_factor_prediction_1d.csv",
-            mime="text/csv",
-        )
+        .card {
+          background: #0e1523;
+          border: 1px solid #1e2433;
+          border-radius: 12px;
+          padding: 20px;
+        }
+        .ticker-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+        .chip {
+          padding: 5px 12px;
+          border-radius: 20px;
+          border: 1px solid #1e2433;
+          background: transparent;
+          color: #8892a4;
+          font-size: 11px;
+          font-family: 'DM Mono', monospace;
+          cursor: pointer;
+          letter-spacing: 1px;
+          transition: all 0.2s;
+        }
+        .chip:hover, .chip.active {
+          border-color: #00e5a0;
+          color: #00e5a0;
+          background: rgba(0,229,160,0.08);
+        }
+        .search-bar {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .search-input {
+          flex: 1;
+          background: #0e1523;
+          border: 1px solid #1e2433;
+          border-radius: 8px;
+          padding: 10px 16px;
+          color: #e8ecf4;
+          font-family: 'DM Mono', monospace;
+          font-size: 13px;
+          outline: none;
+          text-transform: uppercase;
+          letter-spacing: 2px;
+          transition: border-color 0.2s;
+        }
+        .search-input:focus { border-color: #00e5a0; }
+        .search-input::placeholder { color: #3a4455; text-transform: none; letter-spacing: 0; }
+        .search-btn {
+          background: #00e5a0;
+          color: #080d17;
+          border: none;
+          border-radius: 8px;
+          padding: 10px 20px;
+          font-family: 'DM Mono', monospace;
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 1px;
+          cursor: pointer;
+          transition: opacity 0.2s;
+        }
+        .search-btn:hover { opacity: 0.85; }
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .anim { animation: fadeUp 0.4s ease forwards; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+        .price-big {
+          font-family: 'Syne', sans-serif;
+          font-size: 48px;
+          font-weight: 800;
+          line-height: 1;
+          letter-spacing: -1px;
+        }
+        .range-bar-track {
+          height: 4px;
+          background: #1e2433;
+          border-radius: 2px;
+          position: relative;
+          margin-top: 4px;
+        }
+        .range-bar-fill {
+          position: absolute;
+          left: 0;
+          top: 0;
+          height: 4px;
+          border-radius: 2px;
+          transition: width 1s ease;
+        }
+        .range-dot {
+          position: absolute;
+          top: -4px;
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          transform: translateX(-50%);
+          border: 2px solid #080d17;
+          transition: left 1s ease;
+        }
+        .live-dot {
+          width: 8px; height: 8px; border-radius: 50%; background: #00e5a0;
+          animation: pulse 1.5s infinite;
+          display: inline-block; margin-right: 6px;
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.8); }
+        }
+      `}</style>
 
+      <div className="evaluator-root">
+        <div style={{ maxWidth: 800, margin: "0 auto" }}>
 
-if __name__ == "__main__":
-    main()
+          {/* Header */}
+          <div style={{ marginBottom: 28 }}>
+            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: -0.5 }}>
+              Stock <span style={{ color: "#00e5a0" }}>Evaluator</span>
+            </h1>
+            <p style={{ color: "#8892a4", fontSize: 12, marginTop: 4, letterSpacing: 1 }}>REAL-TIME ANALYSIS · TECHNICAL SCORING · MARKET SIGNALS</p>
+          </div>
+
+          {/* Search */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <form onSubmit={handleSearch} className="search-bar">
+              <input
+                ref={inputRef}
+                className="search-input"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Enter ticker symbol (e.g. MSFT)"
+              />
+              <button type="submit" className="search-btn">EVALUATE</button>
+            </form>
+            {error && <p style={{ color: "#ff4d6d", fontSize: 11, marginTop: 8, fontFamily: "'DM Mono', monospace" }}>{error}</p>}
+            <div className="ticker-chips">
+              {Object.keys(MOCK_DATA).map(sym => (
+                <button key={sym} className={`chip ${ticker === sym ? "active" : ""}`} onClick={() => { setTicker(sym); setData(MOCK_DATA[sym]); setAnimKey(k => k + 1); setError(""); }}>
+                  {sym}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div key={animKey} className="anim">
+
+            {/* Price Hero */}
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span className="live-dot" />
+                    <span style={{ color: "#8892a4", fontSize: 11, letterSpacing: 2 }}>LIVE</span>
+                    <span style={{ color: "#3a4455", fontSize: 11 }}>·</span>
+                    <span style={{ color: "#8892a4", fontSize: 11, letterSpacing: 1 }}>{ticker}</span>
+                  </div>
+                  <div style={{ color: "#8892a4", fontSize: 13, marginBottom: 4 }}>{data.name}</div>
+                  <div className="price-big">${data.price.toFixed(2)}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                    <span style={{ color: accentColor, fontSize: 16, fontWeight: 600 }}>
+                      {isPositive ? "▲" : "▼"} ${Math.abs(data.change).toFixed(2)}
+                    </span>
+                    <span style={{
+                      background: isPositive ? "rgba(0,229,160,0.1)" : "rgba(255,77,109,0.1)",
+                      color: accentColor,
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}>
+                      {isPositive ? "+" : ""}{data.changePct.toFixed(2)}%
+                    </span>
+                  </div>
+                </div>
+                <RatingGauge score={data.ratingScore} />
+              </div>
+
+              {/* Mini chart */}
+              <div style={{ marginTop: 16 }}>
+                <MiniChart history={data.history} positive={isPositive} />
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                  {MONTHS.map((m, i) => (
+                    <span key={i} style={{ color: "#3a4455", fontSize: 9, fontFamily: "'DM Mono', monospace" }}>{m}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Stats Grid */}
+            <div className="grid-2" style={{ marginBottom: 16 }}>
+              <div className="card">
+                <div style={{ color: "#8892a4", fontSize: 10, letterSpacing: 2, marginBottom: 12 }}>TRADING DATA</div>
+                {statRow("OPEN", `$${data.open.toFixed(2)}`)}
+                {statRow("HIGH", `$${data.high.toFixed(2)}`, true)}
+                {statRow("LOW", `$${data.low.toFixed(2)}`)}
+                {statRow("VOLUME", data.volume)}
+                {statRow("MKT CAP", data.mktCap)}
+              </div>
+
+              <div className="card">
+                <div style={{ color: "#8892a4", fontSize: 10, letterSpacing: 2, marginBottom: 12 }}>FUNDAMENTALS</div>
+                {statRow("P/E RATIO", data.pe)}
+                {statRow("EPS", `$${data.eps}`)}
+                {statRow("52W HIGH", `$${data.week52High}`)}
+                {statRow("52W LOW", `$${data.week52Low}`)}
+                {statRow("ANALYST", data.rating, true)}
+              </div>
+            </div>
+
+            {/* 52W Range */}
+            <div className="card">
+              <div style={{ color: "#8892a4", fontSize: 10, letterSpacing: 2, marginBottom: 16 }}>52-WEEK RANGE</div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ color: "#ff4d6d", fontSize: 12 }}>${data.week52Low}</span>
+                <span style={{ color: "#e8ecf4", fontSize: 12, fontWeight: 600 }}>${data.price.toFixed(2)}</span>
+                <span style={{ color: "#00e5a0", fontSize: 12 }}>${data.week52High}</span>
+              </div>
+              <div className="range-bar-track">
+                {(() => {
+                  const pct = ((data.price - data.week52Low) / (data.week52High - data.week52Low)) * 100;
+                  return (
+                    <>
+                      <div className="range-bar-fill" style={{ width: `${pct}%`, background: `linear-gradient(90deg, #ff4d6d, ${accentColor})` }} />
+                      <div className="range-dot" style={{ left: `${pct}%`, background: accentColor }} />
+                    </>
+                  );
+                })()}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+                <span style={{ color: "#3a4455", fontSize: 10 }}>52W LOW</span>
+                <span style={{ color: "#3a4455", fontSize: 10 }}>52W HIGH</span>
+              </div>
+            </div>
+
+          </div>
+
+          <p style={{ textAlign: "center", color: "#3a4455", fontSize: 10, marginTop: 20, letterSpacing: 1 }}>
+            SIMULATED DATA FOR DEMONSTRATION PURPOSES ONLY · NOT FINANCIAL ADVICE
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
