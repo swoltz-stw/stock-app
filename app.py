@@ -395,15 +395,22 @@ def main():
         })
         st.dataframe(factor_table)
 
+if st.sidebar.button("Run Prediction"):
+        ...
+        if error:
+            ...
+            return
+
+        # All of this aligned at 8 spaces (one indent inside `if st.sidebar...`)
+        st.subheader(f"Results for {ticker}")
+        ...
         st.markdown("---")
-st.subheader("Price History (Close)")
+        st.subheader("Price History (Close)")
 
-# Build a simple 1D DataFrame for Streamlit
-price_to_show = pd.DataFrame(
-    {"Close": df["Close"].astype(float).values}
-)
-
-st.line_chart(price_to_show)
+        price_to_show = pd.DataFrame(
+            {"Close": df["Close"].astype(float).values}
+        )
+        st.line_chart(price_to_show)
 
         st.subheader("Recent Features Snapshot (Last 10 Days)")
         st.dataframe(df[feature_cols + ["target"]].tail(10))
@@ -418,7 +425,5 @@ st.line_chart(price_to_show)
             file_name=f"{ticker}_hybrid_prediction_1d.csv",
             mime="text/csv"
         )
-
-
 if __name__ == "__main__":
     main()
