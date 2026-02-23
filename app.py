@@ -395,7 +395,7 @@ def main():
         })
         st.dataframe(factor_table)
 
-       st.markdown("---")
+        st.markdown("---")
 st.subheader("Price History (Close)")
 
 # Build a simple 1D DataFrame for Streamlit
