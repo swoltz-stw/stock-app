@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score
 
 
 # =========================
-# Data + Feature Functions (NO RSI)
+# Data + Feature Functions (NO RSI, NO MACRO)
 # =========================
 
 def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
@@ -24,38 +24,27 @@ def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
     if data is None or data.empty:
         return pd.DataFrame()
 
-    # If MultiIndex columns (e.g., ('Close','QQQ')), extract the Close level
+    # If MultiIndex columns (e.g., ('Close','QQQ')), flatten
     if isinstance(data.columns, pd.MultiIndex):
-        try:
-            # Try selecting level 0 == 'Close'
-            close = data['Close']
-        except KeyError:
-            # Fallback: cross-section by level 0
-            close = data.xs('Close', axis=1, level=0)
+        data.columns = data.columns.get_level_values(-1)
 
-        # If we still have multiple columns (e.g., one per ticker), take the first
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-
-        data = pd.DataFrame({'Close': close})
-
-    else:
-        # Single index columns
-        cols = list(data.columns)
-        if 'Close' in cols:
-            close = data['Close']
-        elif 'Adj Close' in cols:
-            close = data['Adj Close']
-        else:
-            # No usable price column
-            return pd.DataFrame()
-
-        data = pd.DataFrame({'Close': close})
-
-    # Drop duplicate columns if any remain
+    # Drop duplicate columns
     data = data.loc[:, ~data.columns.duplicated()]
-    data.dropna(inplace=True)
-    return data
+
+    # Force to a single Close series
+    if "Close" in data.columns:
+        close = data["Close"]
+    elif "Adj Close" in data.columns:
+        close = data["Adj Close"]
+    else:
+        return pd.DataFrame()
+
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+
+    out = pd.DataFrame({"Close": close})
+    out.dropna(inplace=True)
+    return out
 
 
 def build_features(data: pd.DataFrame):
@@ -64,7 +53,7 @@ def build_features(data: pd.DataFrame):
     """
     df = data.copy()
 
-    if df.empty or 'Close' not in df.columns:
+    if df.empty or "Close" not in df.columns:
         return pd.DataFrame(), pd.DataFrame(), pd.Series(dtype=int), []
 
     # Daily returns
@@ -84,8 +73,7 @@ def build_features(data: pd.DataFrame):
     # 52-week high drawdown
     window_52w = 252
     df["52w_high"] = df["Close"].rolling(window=window_52w).max()
-    dd = (df["Close"] - df["52w_high"]) / (df["52w_high"] + 1e-9)
-    df["dd_52w"] = dd
+    df["dd_52w"] = (df["Close"] - df["52w_high"]) / (df["52w_high"] + 1e-9)
 
     # Target: 1 if next day's close > today's close, else 0
     df["target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
@@ -303,103 +291,6 @@ def get_technical_factor_scores(df: pd.DataFrame):
 
 
 # =========================
-# Macro / Context Factor Scoring
-# =========================
-
-SECTOR_ETF_MAP = {
-    "Information Technology": "XLK",
-    "Technology": "XLK",
-    "Financial Services": "XLF",
-    "Financials": "XLF",
-    "Health Care": "XLV",
-    "Healthcare": "XLV",
-    "Consumer Discretionary": "XLY",
-    "Consumer Staples": "XLP",
-    "Industrials": "XLI",
-    "Energy": "XLE",
-    "Materials": "XLB",
-    "Communication Services": "XLC",
-    "Real Estate": "XLRE",
-    "Utilities": "XLU",
-}
-
-
-def score_market_regime(spy_ratio: float) -> float:
-    if spy_ratio is None or np.isnan(spy_ratio):
-        return 50.0
-    spy_ratio = max(min(spy_ratio, 1.2), 0.8)
-    return (spy_ratio - 0.8) / 0.4 * 100.0
-
-
-def score_sector_relative(rel: float) -> float:
-    if rel is None or np.isnan(rel):
-        return 50.0
-    rel = max(min(rel, 0.1), -0.1)
-    return (rel + 0.1) / 0.2 * 100.0
-
-
-def score_vol_regime(vix_level: float) -> float:
-    if vix_level is None or np.isnan(vix_level):
-        return 50.0
-    vix_level = max(min(vix_level, 40.0), 10.0)
-    return (40.0 - vix_level) / 30.0 * 100.0
-
-
-def get_macro_factor_scores(ticker: str):
-    spy_data = get_price_history("SPY", lookback_years=1)
-    spy_data["SMA_50"] = spy_data["Close"].rolling(window=50).mean()
-    spy_data["SMA_200"] = spy_data["Close"].rolling(window=200).mean()
-    spy_data.dropna(inplace=True)
-    if not spy_data.empty:
-        latest_spy = spy_data.iloc[-1]
-        spy_ratio = latest_spy["SMA_50"] / (latest_spy["SMA_200"] + 1e-9)
-    else:
-        spy_ratio = None
-
-    try:
-        sector = yf.Ticker(ticker).info.get("sector", None)
-    except Exception:
-        sector = None
-    sector_etf = SECTOR_ETF_MAP.get(sector, "SPY")
-
-    lookback_days = 60
-    sector_data = yf.download(sector_etf, period=f"{lookback_days}d")
-    spy_short = yf.download("SPY", period=f"{lookback_days}d")
-
-    if not sector_data.empty and not spy_short.empty:
-        sector_ret_1m = sector_data["Close"].iloc[-1] / sector_data["Close"].iloc[0] - 1
-        spy_ret_1m = spy_short["Close"].iloc[-1] / spy_short["Close"].iloc[0] - 1
-        rel_strength = sector_ret_1m - spy_ret_1m
-    else:
-        rel_strength = None
-
-    vix_data = yf.download("^VIX", period="60d")
-    if not vix_data.empty:
-        vix_level = float(vix_data["Close"].iloc[-1])
-    else:
-        vix_level = None
-
-    factors = {}
-    factors["market_regime_SPY_50_200"] = {
-        "raw": spy_ratio,
-        "score": score_market_regime(spy_ratio),
-    }
-    factors["sector_relative_strength"] = {
-        "raw": rel_strength,
-        "score": score_sector_relative(rel_strength),
-    }
-    factors["volatility_regime_VIX"] = {
-        "raw": vix_level,
-        "score": score_vol_regime(vix_level),
-    }
-
-    valid_scores = [d["score"] for d in factors.values() if d["score"] is not None]
-    macro_score = float(np.mean(valid_scores)) if valid_scores else 50.0
-
-    return macro_score, factors
-
-
-# =========================
 # ML Training (reference)
 # =========================
 
@@ -449,7 +340,7 @@ def predict_next_day(model, X: pd.DataFrame):
 
 def main():
     st.set_page_config(page_title="Hybrid Stock Predictor (No RSI)", page_icon="📈")
-    st.title("Hybrid Stock Predictor (ML + Fundamentals + Macro)")
+    st.title("Hybrid Stock Predictor (ML + Fundamentals)")
 
     st.sidebar.header("Configuration")
 
@@ -506,13 +397,9 @@ def main():
 
                 technical_score, tech_factors = get_technical_factor_scores(df)
                 fundamental_score, fund_factors = get_fundamental_factor_scores(ticker)
-                macro_score, macro_factors = get_macro_factor_scores(ticker)
 
-                final_factor_score = (
-                    0.4 * technical_score
-                    + 0.4 * fundamental_score
-                    + 0.2 * macro_score
-                )
+                # 50/50 split Technical / Fundamental (since Macro is removed for stability)
+                final_factor_score = 0.5 * technical_score + 0.5 * fundamental_score
                 final_factor_score = float(np.clip(final_factor_score, 0.0, 100.0))
 
                 direction_final = "UP" if final_factor_score > 50.0 else "DOWN"
@@ -538,13 +425,6 @@ def main():
                         "raw_value": d["raw"],
                         "score_0_100": d["score"],
                     })
-                for name, d in macro_factors.items():
-                    factor_rows.append({
-                        "factor": name,
-                        "category": "Macro",
-                        "raw_value": d["raw"],
-                        "score_0_100": d["score"],
-                    })
 
                 factors_df = pd.DataFrame(factor_rows)
 
@@ -552,20 +432,14 @@ def main():
                     {
                         "category": "Technical",
                         "score": technical_score,
-                        "weight": 0.4,
-                        "weighted_contribution": 0.4 * technical_score,
+                        "weight": 0.5,
+                        "weighted_contribution": 0.5 * technical_score,
                     },
                     {
                         "category": "Fundamental",
                         "score": fundamental_score,
-                        "weight": 0.4,
-                        "weighted_contribution": 0.4 * fundamental_score,
-                    },
-                    {
-                        "category": "Macro",
-                        "score": macro_score,
-                        "weight": 0.2,
-                        "weighted_contribution": 0.2 * macro_score,
+                        "weight": 0.5,
+                        "weighted_contribution": 0.5 * fundamental_score,
                     },
                 ]
                 category_df = pd.DataFrame(category_rows)
@@ -573,7 +447,7 @@ def main():
                 category_df.loc["Total", "score"] = None
                 category_df.loc["Total", "weight"] = 1.0
                 category_df.loc["Total", "weighted_contribution"] = (
-                    0.4 * technical_score + 0.4 * fundamental_score + 0.2 * macro_score
+                    0.5 * technical_score + 0.5 * fundamental_score
                 )
 
             except Exception as e:
@@ -601,7 +475,7 @@ def main():
         st.write(f"P(DOWN) from ML model: `{p_down * 100:.1f}%`")
 
         if show_category_summary:
-            st.markdown("### Category scores (Technical / Fundamental / Macro)")
+            st.markdown("### Category scores (Technical / Fundamental)")
             st.dataframe(category_df)
 
         if show_factor_details:
@@ -627,7 +501,6 @@ def main():
             "confidence_pct_factor": confidence_pct,
             "technical_score": technical_score,
             "fundamental_score": fundamental_score,
-            "macro_score": macro_score,
             "ml_p_up_1d": p_up,
             "ml_p_down_1d": p_down,
             "ml_backtest_accuracy": acc,
