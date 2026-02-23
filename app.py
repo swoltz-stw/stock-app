@@ -398,11 +398,11 @@ def main():
         st.markdown("---")
         st.subheader("Price History (Close)")
 
-        
-price_to_show = pd.DataFrame({
-    "Close": df["Close"].astype(float).to_list()
-})
-
+        # Ensure 1-D data for chart
+        price_to_show = pd.DataFrame({
+            "Close": df["Close"].astype(float).to_list()
+        })
+        st.line_chart(price_to_show)
 
         st.subheader("Recent Features Snapshot (Last 10 Days)")
         st.dataframe(df[feature_cols + ["target"]].tail(10))
