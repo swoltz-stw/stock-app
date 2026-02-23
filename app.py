@@ -292,7 +292,7 @@ def get_technical_factor_scores(df: pd.DataFrame):
     }
     factors["SMA_10"] = {
         "raw": latest["SMA_10"],
-        "score": 50.0,  # level itself not scored, just neutral placeholder
+        "score": 50.0,  # neutral placeholder
     }
     factors["SMA_30"] = {
         "raw": latest["SMA_30"],
