@@ -23,15 +23,19 @@ def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
 
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    # Compute Relative Strength Index (RSI) for a price series.
+    # Compute RSI using pure pandas (no np.where), stays 1-D.
     delta = series.diff()
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
 
-    gain_rol = pd.Series(gain, index=series.index).rolling(window=period).mean()
-    loss_rol = pd.Series(loss, index=series.index).rolling(window=period).mean()
+    # Gains: positive deltas, else 0
+    gain = delta.where(delta > 0, 0.0)
 
-    rs = gain_rol / (loss_rol + 1e-9)
+    # Losses: negative deltas, else 0 (as positive numbers)
+    loss = (-delta).where(delta < 0, 0.0)
+
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+
+    rs = avg_gain / (avg_loss + 1e-9)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
