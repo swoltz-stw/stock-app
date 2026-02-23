@@ -18,7 +18,11 @@ def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
     end = datetime.today()
     start = end - timedelta(days=365 * lookback_years)
     data = yf.download(ticker, start=start, end=end)
-    # 🔧 IMPORTANT: remove duplicate columns (e.g., multiple "Close" columns)
+
+    # 🔧 IMPORTANT: handle duplicate/multi-level columns (e.g., multiple "Close")
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(-1)
+
     data = data.loc[:, ~data.columns.duplicated()]
     data.dropna(inplace=True)
     return data
@@ -29,6 +33,12 @@ def build_features(data: pd.DataFrame):
     Target: 1 if next day's close > today's close, else 0.
     """
     df = data.copy()
+
+    # 🔧 Ensure "Close" is a single Series (not a DataFrame)
+    close = df["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+    df["Close"] = close
 
     # Daily returns
     df["ret_1d"] = df["Close"].pct_change(1)
@@ -47,7 +57,12 @@ def build_features(data: pd.DataFrame):
     # 52-week high drawdown
     window_52w = 252
     df["52w_high"] = df["Close"].rolling(window=window_52w).max()
-    df["dd_52w"] = (df["Close"] - df["52w_high"]) / (df["52w_high"] + 1e-9)
+
+    dd = (df["Close"] - df["52w_high"]) / (df["52w_high"] + 1e-9)
+    # 🔧 If dd somehow ends up as DataFrame, reduce to first column
+    if isinstance(dd, pd.DataFrame):
+        dd = dd.iloc[:, 0]
+    df["dd_52w"] = dd
 
     # Target: 1 if next day's close > today's close, else 0
     df["target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
@@ -131,21 +146,20 @@ def score_debt_to_equity(de: float) -> float:
 def score_roe(roe: float) -> float:
     if roe is None:
         return 50.0
-    roe = max(min(roe, 0.3), -0.1)  # cap between -10% and 30%
+    roe = max(min(roe, 0.3), -0.1)
     return (roe + 0.1) / 0.4 * 100.0
 
 
 def score_roa(roa: float) -> float:
     if roa is None:
         return 50.0
-    roa = max(min(roa, 0.2), -0.05)  # cap between -5% and 20%
+    roa = max(min(roa, 0.2), -0.05)
     return (roa + 0.05) / 0.25 * 100.0
 
 
 def score_dividend_yield(dy: float) -> float:
     if dy is None or dy < 0:
         return 50.0
-    # Reward moderate yields (1%-5%), penalize extremes
     if dy < 0.01:
         return 40.0
     if dy < 0.05:
@@ -158,7 +172,6 @@ def score_dividend_yield(dy: float) -> float:
 def score_payout_ratio(pr: float) -> float:
     if pr is None or pr < 0:
         return 50.0
-    # Ideal payout roughly 20%-60%
     if pr < 0.2:
         return 60.0
     if pr < 0.6:
@@ -194,46 +207,16 @@ def get_fundamental_factor_scores(ticker: str):
 
     factors = {}
 
-    factors["trailingPE"] = {
-        "raw": trailing_pe,
-        "score": score_pe(trailing_pe),
-    }
-    factors["forwardPE"] = {
-        "raw": forward_pe,
-        "score": score_pe(forward_pe),
-    }
-    factors["profitMargins"] = {
-        "raw": profit_margin,
-        "score": score_margin(profit_margin),
-    }
-    factors["revenueGrowth"] = {
-        "raw": revenue_growth,
-        "score": score_growth(revenue_growth),
-    }
-    factors["debtToEquity"] = {
-        "raw": debt_to_equity,
-        "score": score_debt_to_equity(debt_to_equity),
-    }
-    factors["ROE"] = {
-        "raw": roe,
-        "score": score_roe(roe),
-    }
-    factors["ROA"] = {
-        "raw": roa,
-        "score": score_roa(roa),
-    }
-    factors["FCF_margin"] = {
-        "raw": fcf_margin,
-        "score": score_margin(fcf_margin),
-    }
-    factors["dividendYield"] = {
-        "raw": dividend_yield,
-        "score": score_dividend_yield(dividend_yield),
-    }
-    factors["payoutRatio"] = {
-        "raw": payout_ratio,
-        "score": score_payout_ratio(payout_ratio),
-    }
+    factors["trailingPE"] = {"raw": trailing_pe, "score": score_pe(trailing_pe)}
+    factors["forwardPE"] = {"raw": forward_pe, "score": score_pe(forward_pe)}
+    factors["profitMargins"] = {"raw": profit_margin, "score": score_margin(profit_margin)}
+    factors["revenueGrowth"] = {"raw": revenue_growth, "score": score_growth(revenue_growth)}
+    factors["debtToEquity"] = {"raw": debt_to_equity, "score": score_debt_to_equity(debt_to_equity)}
+    factors["ROE"] = {"raw": roe, "score": score_roe(roe)}
+    factors["ROA"] = {"raw": roa, "score": score_roa(roa)}
+    factors["FCF_margin"] = {"raw": fcf_margin, "score": score_margin(fcf_margin)}
+    factors["dividendYield"] = {"raw": dividend_yield, "score": score_dividend_yield(dividend_yield)}
+    factors["payoutRatio"] = {"raw": payout_ratio, "score": score_payout_ratio(payout_ratio)}
 
     valid_scores = [d["score"] for d in factors.values() if d["score"] is not None]
     fundamental_score = float(np.mean(valid_scores)) if valid_scores else 50.0
@@ -277,42 +260,18 @@ def get_technical_factor_scores(df: pd.DataFrame):
     latest = df.iloc[-1]
 
     factors = {}
-    factors["ret_1d"] = {
-        "raw": latest["ret_1d"],
-        "score": score_return(latest["ret_1d"]),
-    }
-    factors["ret_3d"] = {
-        "raw": latest["ret_3d"],
-        "score": score_return(latest["ret_3d"]),
-    }
-    factors["ret_5d"] = {
-        "raw": latest["ret_5d"],
-        "score": score_return(latest["ret_5d"]),
-    }
-    factors["SMA_10"] = {
-        "raw": latest["SMA_10"],
-        "score": 50.0,
-    }
-    factors["SMA_30"] = {
-        "raw": latest["SMA_30"],
-        "score": 50.0,
-    }
+    factors["ret_1d"] = {"raw": latest["ret_1d"], "score": score_return(latest["ret_1d"])}
+    factors["ret_3d"] = {"raw": latest["ret_3d"], "score": score_return(latest["ret_3d"])}
+    factors["ret_5d"] = {"raw": latest["ret_5d"], "score": score_return(latest["ret_5d"])}
+    factors["SMA_10"] = {"raw": latest["SMA_10"], "score": 50.0}
+    factors["SMA_30"] = {"raw": latest["SMA_30"], "score": 50.0}
     factors["SMA_ratio_10_30"] = {
         "raw": latest["SMA_ratio_10_30"],
         "score": score_sma_ratio(latest["SMA_ratio_10_30"]),
     }
-    factors["vol_10d"] = {
-        "raw": latest["vol_10d"],
-        "score": score_vol(latest["vol_10d"]),
-    }
-    factors["vol_60d"] = {
-        "raw": latest["vol_60d"],
-        "score": score_vol(latest["vol_60d"]),
-    }
-    factors["dd_52w"] = {
-        "raw": latest["dd_52w"],
-        "score": score_drawdown(latest["dd_52w"]),
-    }
+    factors["vol_10d"] = {"raw": latest["vol_10d"], "score": score_vol(latest["vol_10d"])}
+    factors["vol_60d"] = {"raw": latest["vol_60d"], "score": score_vol(latest["vol_60d"])}
+    factors["dd_52w"] = {"raw": latest["dd_52w"], "score": score_drawdown(latest["dd_52w"])}
 
     valid_scores = [d["score"] for d in factors.values() if d["score"] is not None]
     technical_score = float(np.mean(valid_scores)) if valid_scores else 50.0
@@ -364,7 +323,6 @@ def score_vol_regime(vix_level: float) -> float:
 
 
 def get_macro_factor_scores(ticker: str):
-    # Market regime via SPY
     spy_data = get_price_history("SPY", lookback_years=1)
     spy_data["SMA_50"] = spy_data["Close"].rolling(window=50).mean()
     spy_data["SMA_200"] = spy_data["Close"].rolling(window=200).mean()
@@ -375,7 +333,6 @@ def get_macro_factor_scores(ticker: str):
     else:
         spy_ratio = None
 
-    # Sector relative strength
     try:
         sector = yf.Ticker(ticker).info.get("sector", None)
     except Exception:
@@ -385,18 +342,14 @@ def get_macro_factor_scores(ticker: str):
     lookback_days = 60
     sector_data = yf.download(sector_etf, period=f"{lookback_days}d")
     spy_short = yf.download("SPY", period=f"{lookback_days}d")
-    sector_ret_1m = None
-    spy_ret_1m = None
-    if not sector_data.empty:
+
+    if not sector_data.empty and not spy_short.empty:
         sector_ret_1m = sector_data["Close"].iloc[-1] / sector_data["Close"].iloc[0] - 1
-    if not spy_short.empty:
         spy_ret_1m = spy_short["Close"].iloc[-1] / spy_short["Close"].iloc[0] - 1
-    if sector_ret_1m is not None and spy_ret_1m is not None:
         rel_strength = sector_ret_1m - spy_ret_1m
     else:
         rel_strength = None
 
-    # Volatility regime via VIX
     vix_data = yf.download("^VIX", period="60d")
     if not vix_data.empty:
         vix_level = float(vix_data["Close"].iloc[-1])
@@ -521,16 +474,13 @@ def main():
                         "Predictions and calibration may be less reliable."
                     )
 
-                # ML model for reference
                 model, acc, brier = train_model(X, y, test_size=test_size)
                 direction_ml, confidence_ml, p_up, p_down = predict_next_day(model, X)
 
-                # Factor scores
                 technical_score, tech_factors = get_technical_factor_scores(df)
                 fundamental_score, fund_factors = get_fundamental_factor_scores(ticker)
                 macro_score, macro_factors = get_macro_factor_scores(ticker)
 
-                # Category weights: 40% technical, 40% fundamental, 20% macro
                 final_factor_score = (
                     0.4 * technical_score
                     + 0.4 * fundamental_score
@@ -538,7 +488,6 @@ def main():
                 )
                 final_factor_score = float(np.clip(final_factor_score, 0.0, 100.0))
 
-                # Direction & confidence from factor score
                 direction_final = "UP" if final_factor_score > 50.0 else "DOWN"
                 distance_from_50 = abs(final_factor_score - 50.0) / 50.0
                 confidence_pct = float(np.clip(distance_from_50 * 100.0, 0.0, 100.0))
@@ -547,7 +496,6 @@ def main():
                 last_date = latest_row.name.date()
                 last_close = float(latest_row["Close"])
 
-                # Prepare factor tables
                 factor_rows = []
                 for name, d in tech_factors.items():
                     factor_rows.append({
@@ -607,9 +555,6 @@ def main():
                 st.code(traceback.format_exc())
                 return
 
-        # =========================
-        # Display Results
-        # =========================
         st.subheader(f"Results for {ticker}")
 
         col1, col2, col3 = st.columns(3)
@@ -628,27 +573,22 @@ def main():
         st.write(f"P(UP) from ML model: `{p_up * 100:.1f}%`")
         st.write(f"P(DOWN) from ML model: `{p_down * 100:.1f}%`")
 
-        # Category summary
         if show_category_summary:
             st.markdown("### Category scores (Technical / Fundamental / Macro)")
             st.dataframe(category_df)
 
-        # Factor-level details
         if show_factor_details:
             st.markdown("### Individual factor scores (0–100)")
             st.dataframe(factors_df)
 
-        # Price chart
         st.markdown("---")
         st.subheader("Price History (Close)")
         price_to_show = pd.DataFrame({"Close": list(df["Close"].astype(float))})
         st.line_chart(price_to_show)
 
-        # Recent features
         st.subheader("Recent Features Snapshot (Last 10 Days)")
         st.dataframe(df[feature_cols + ["target"]].tail(10))
 
-        # Downloadable result
         st.markdown("---")
         st.subheader("Export Prediction Summary")
         summary_row = {
