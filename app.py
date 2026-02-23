@@ -14,15 +14,45 @@ from sklearn.metrics import accuracy_score
 # =========================
 
 def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
-    """Download historical daily OHLC data for a ticker using yfinance."""
+    """Download historical daily OHLC data for a ticker using yfinance.
+    Normalize so we ALWAYS return a DataFrame with a single 'Close' column.
+    """
     end = datetime.today()
     start = end - timedelta(days=365 * lookback_years)
     data = yf.download(ticker, start=start, end=end)
 
-    # 🔧 IMPORTANT: handle duplicate/multi-level columns (e.g., multiple "Close")
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(-1)
+    if data is None or data.empty:
+        return pd.DataFrame()
 
+    # If MultiIndex columns (e.g., ('Close','QQQ')), extract the Close level
+    if isinstance(data.columns, pd.MultiIndex):
+        try:
+            # Try selecting level 0 == 'Close'
+            close = data['Close']
+        except KeyError:
+            # Fallback: cross-section by level 0
+            close = data.xs('Close', axis=1, level=0)
+
+        # If we still have multiple columns (e.g., one per ticker), take the first
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+
+        data = pd.DataFrame({'Close': close})
+
+    else:
+        # Single index columns
+        cols = list(data.columns)
+        if 'Close' in cols:
+            close = data['Close']
+        elif 'Adj Close' in cols:
+            close = data['Adj Close']
+        else:
+            # No usable price column
+            return pd.DataFrame()
+
+        data = pd.DataFrame({'Close': close})
+
+    # Drop duplicate columns if any remain
     data = data.loc[:, ~data.columns.duplicated()]
     data.dropna(inplace=True)
     return data
@@ -34,11 +64,8 @@ def build_features(data: pd.DataFrame):
     """
     df = data.copy()
 
-    # 🔧 Ensure "Close" is a single Series (not a DataFrame)
-    close = df["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-    df["Close"] = close
+    if df.empty or 'Close' not in df.columns:
+        return pd.DataFrame(), pd.DataFrame(), pd.Series(dtype=int), []
 
     # Daily returns
     df["ret_1d"] = df["Close"].pct_change(1)
@@ -57,11 +84,7 @@ def build_features(data: pd.DataFrame):
     # 52-week high drawdown
     window_52w = 252
     df["52w_high"] = df["Close"].rolling(window=window_52w).max()
-
     dd = (df["Close"] - df["52w_high"]) / (df["52w_high"] + 1e-9)
-    # 🔧 If dd somehow ends up as DataFrame, reduce to first column
-    if isinstance(dd, pd.DataFrame):
-        dd = dd.iloc[:, 0]
     df["dd_52w"] = dd
 
     # Target: 1 if next day's close > today's close, else 0
@@ -467,6 +490,10 @@ def main():
                     return
 
                 df, X, y, feature_cols = build_features(data)
+
+                if df.empty:
+                    st.error("Not enough usable data after feature engineering.")
+                    return
 
                 if len(df) < 150:
                     st.warning(
