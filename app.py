@@ -395,15 +395,15 @@ def main():
         })
         st.dataframe(factor_table)
 
-        st.markdown("---")
-        st.subheader("Price History (Close)")
+       st.markdown("---")
+st.subheader("Price History (Close)")
 
-        price_to_show = df[["Close"]].copy()
-        try:
-            price_to_show.index = price_to_show.index.tz_localize(None)
-        except Exception:
-            pass
-        st.line_chart(price_to_show)
+# Build a simple 1D DataFrame for Streamlit
+price_to_show = pd.DataFrame(
+    {"Close": df["Close"].astype(float).values}
+)
+
+st.line_chart(price_to_show)
 
         st.subheader("Recent Features Snapshot (Last 10 Days)")
         st.dataframe(df[feature_cols + ["target"]].tail(10))
