@@ -18,6 +18,8 @@ def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
     end = datetime.today()
     start = end - timedelta(days=365 * lookback_years)
     data = yf.download(ticker, start=start, end=end)
+    # 🔧 IMPORTANT: remove duplicate columns (e.g., multiple "Close" columns)
+    data = data.loc[:, ~data.columns.duplicated()]
     data.dropna(inplace=True)
     return data
 
@@ -233,7 +235,6 @@ def get_fundamental_factor_scores(ticker: str):
         "score": score_payout_ratio(payout_ratio),
     }
 
-    # Compute category score
     valid_scores = [d["score"] for d in factors.values() if d["score"] is not None]
     fundamental_score = float(np.mean(valid_scores)) if valid_scores else 50.0
 
@@ -241,13 +242,13 @@ def get_fundamental_factor_scores(ticker: str):
 
 
 # =========================
-# Technical Factor Scoring (from df)
+# Technical Factor Scoring
 # =========================
 
 def score_return(r: float) -> float:
     if r is None or np.isnan(r):
         return 50.0
-    r = max(min(r, 0.1), -0.1)  # cap -10% to +10%
+    r = max(min(r, 0.1), -0.1)
     return (r + 0.1) / 0.2 * 100.0
 
 
@@ -255,7 +256,6 @@ def score_vol(vol: float, low: float = 0.005, high: float = 0.05) -> float:
     if vol is None or np.isnan(vol):
         return 50.0
     vol = max(min(vol, high), low)
-    # lower vol (near low) -> higher score
     return (high - vol) / (high - low) * 100.0
 
 
@@ -269,8 +269,7 @@ def score_sma_ratio(ratio: float) -> float:
 def score_drawdown(dd: float) -> float:
     if dd is None or np.isnan(dd):
         return 50.0
-    dd = max(min(dd, 0.0), -0.8)  # cap at -80%
-    # deeper negative (more beaten up) -> higher score
+    dd = max(min(dd, 0.0), -0.8)
     return (abs(dd) / 0.8) * 100.0
 
 
@@ -292,7 +291,7 @@ def get_technical_factor_scores(df: pd.DataFrame):
     }
     factors["SMA_10"] = {
         "raw": latest["SMA_10"],
-        "score": 50.0,  # neutral placeholder
+        "score": 50.0,
     }
     factors["SMA_30"] = {
         "raw": latest["SMA_30"],
@@ -361,7 +360,6 @@ def score_vol_regime(vix_level: float) -> float:
     if vix_level is None or np.isnan(vix_level):
         return 50.0
     vix_level = max(min(vix_level, 40.0), 10.0)
-    # lower VIX -> higher score
     return (40.0 - vix_level) / 30.0 * 100.0
 
 
