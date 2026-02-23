@@ -23,15 +23,15 @@ def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
 
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    # Compute RSI using pure pandas (1-D safe).
+    # Compute Relative Strength Index (RSI) for a price series.
     delta = series.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = (-delta).where(delta < 0, 0.0)
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
 
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
+    gain_rol = pd.Series(gain, index=series.index).rolling(window=period).mean()
+    loss_rol = pd.Series(loss, index=series.index).rolling(window=period).mean()
 
-    rs = avg_gain / (avg_loss + 1e-9)
+    rs = gain_rol / (loss_rol + 1e-9)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
@@ -48,7 +48,7 @@ def build_features_v2(data: pd.DataFrame):
 
     # Moving averages
     df["SMA_10"] = df["Close"].rolling(window=10).mean()
-    df["SMA_30"] = df["Close"].rolling(window=30).mean()
+    df["SMA_30"] = df["Close"] .rolling(window=30).mean()
     df["SMA_ratio_10_30"] = df["SMA_10"] / (df["SMA_30"] + 1e-9)
 
     # RSI
@@ -95,6 +95,7 @@ def safe_get(info: dict, key: str, default=None):
 
 def score_pe(pe: float) -> float:
     # Heuristic scoring for P/E: lower is generally better up to a point.
+    # Returns a score between 0 and 100.
     if pe is None or pe <= 0:
         return 50.0
     if pe < 10:
@@ -193,6 +194,7 @@ def get_fundamental_scores(ticker: str):
 
 def train_model_v2(X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random_state: int = 42):
     # Train a RandomForest classifier and return model, accuracy, and Brier score.
+    # Uses a time-based split (no shuffling).
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, shuffle=False
     )
@@ -316,7 +318,7 @@ def main():
 
                 latest_row = df.iloc[-1]
                 last_date = latest_row.name.date()
-                last_close = float(latest_row["Close"])
+                last_close = latest_row["Close"]
 
                 result_row = {
                     "ticker": ticker,
@@ -340,9 +342,6 @@ def main():
                 st.code(traceback.format_exc())
                 return
 
-        # =========================
-        # Display Results
-        # =========================
         st.subheader(f"Results for {ticker}")
 
         col1, col2, col3 = st.columns(3)
@@ -392,24 +391,19 @@ def main():
         })
         st.dataframe(factor_table)
 
-        # =========================
-        # Charts
-        # =========================
         st.markdown("---")
         st.subheader("Price History (Close)")
 
-        # Ensure 1-D data for chart
-        price_to_show = pd.DataFrame({
-            "Close": df["Close"].astype(float).to_list()
-        })
+        price_to_show = df[["Close"]].copy()
+        try:
+            price_to_show.index = price_to_show.index.tz_localize(None)
+        except Exception:
+            pass
         st.line_chart(price_to_show)
 
         st.subheader("Recent Features Snapshot (Last 10 Days)")
         st.dataframe(df[feature_cols + ["target"]].tail(10))
 
-        # =========================
-        # Downloadable Result
-        # =========================
         st.markdown("---")
         st.subheader("Export Prediction")
 
