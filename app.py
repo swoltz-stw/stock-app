@@ -23,13 +23,9 @@ def get_price_history(ticker: str, lookback_years: int = 3) -> pd.DataFrame:
 
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    # Compute RSI using pure pandas (no np.where), stays 1-D.
+    # Compute RSI using pure pandas (1-D safe).
     delta = series.diff()
-
-    # Gains: positive deltas, else 0
     gain = delta.where(delta > 0, 0.0)
-
-    # Losses: negative deltas, else 0 (as positive numbers)
     loss = (-delta).where(delta < 0, 0.0)
 
     avg_gain = gain.rolling(window=period).mean()
@@ -52,7 +48,7 @@ def build_features_v2(data: pd.DataFrame):
 
     # Moving averages
     df["SMA_10"] = df["Close"].rolling(window=10).mean()
-    df["SMA_30"] = df["Close"] .rolling(window=30).mean()
+    df["SMA_30"] = df["Close"].rolling(window=30).mean()
     df["SMA_ratio_10_30"] = df["SMA_10"] / (df["SMA_30"] + 1e-9)
 
     # RSI
@@ -99,7 +95,6 @@ def safe_get(info: dict, key: str, default=None):
 
 def score_pe(pe: float) -> float:
     # Heuristic scoring for P/E: lower is generally better up to a point.
-    # Returns a score between 0 and 100.
     if pe is None or pe <= 0:
         return 50.0
     if pe < 10:
@@ -198,7 +193,6 @@ def get_fundamental_scores(ticker: str):
 
 def train_model_v2(X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random_state: int = 42):
     # Train a RandomForest classifier and return model, accuracy, and Brier score.
-    # Uses a time-based split (no shuffling).
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, shuffle=False
     )
@@ -346,6 +340,9 @@ def main():
                 st.code(traceback.format_exc())
                 return
 
+        # =========================
+        # Display Results
+        # =========================
         st.subheader(f"Results for {ticker}")
 
         col1, col2, col3 = st.columns(3)
@@ -395,26 +392,21 @@ def main():
         })
         st.dataframe(factor_table)
 
-if st.sidebar.button("Run Prediction"):
-        ...
-        if error:
-            ...
-            return
-
-        # All of this aligned at 8 spaces (one indent inside `if st.sidebar...`)
-        st.subheader(f"Results for {ticker}")
-        ...
+        # =========================
+        # Charts
+        # =========================
         st.markdown("---")
         st.subheader("Price History (Close)")
 
-        price_to_show = pd.DataFrame(
-            {"Close": df["Close"].astype(float).values}
-        )
+        price_to_show = pd.DataFrame({"Close": df["Close"].astype(float).values})
         st.line_chart(price_to_show)
 
         st.subheader("Recent Features Snapshot (Last 10 Days)")
         st.dataframe(df[feature_cols + ["target"]].tail(10))
 
+        # =========================
+        # Downloadable Result
+        # =========================
         st.markdown("---")
         st.subheader("Export Prediction")
 
@@ -425,5 +417,7 @@ if st.sidebar.button("Run Prediction"):
             file_name=f"{ticker}_hybrid_prediction_1d.csv",
             mime="text/csv"
         )
+
+
 if __name__ == "__main__":
     main()
